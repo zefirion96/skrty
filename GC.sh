@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e # Жёстко останавливаем скрипт при любой ошибке!
 
+# 1. Загружаем кириллический шрифт для текущей консоли (Live CD), чтобы русский текст отображался корректно
+setfont cyr-sun16 2>/dev/null || setfont ter-v16n 2>/dev/null || true
+
 echo "============================================="
 echo "   Добро пожаловать в установщик Mirage OS   "
 echo "============================================="
@@ -44,10 +47,21 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 tar -xpvf "$SCRIPT_DIR/mcl_rootfs.tar.xz" -C /mnt/target/
 
 echo "---------------------------------------------"
+echo "Генерация /etc/fstab (Паспорт дисков)..."
+cat << EOF > /mnt/target/etc/fstab
+# <file system> <mount point>   <type>  <options>               <dump>  <pass>
+$TARGET_ROOT   /               ext4    defaults,noatime        0       1
+$TARGET_BOOT   /boot           ext4    defaults,noatime        0       2
+proc           /proc           proc    defaults                0       0
+shm            /dev/shm        tmpfs   nodev,nosuid,noexec     0       0
+EOF
+echo "/etc/fstab успешно сгенерирован! ✅"
+
+echo "---------------------------------------------"
 echo "Настройка даты и времени"
 echo -n "Введите регион (например, Europe): "
 read REGION
-echo -n "Введите город (например, Rome): "
+echo -n "Введите город (например, Moscow): "
 read CITY
 
 echo "${REGION}/${CITY}" > /mnt/target/etc/timezone
@@ -55,6 +69,18 @@ echo "${REGION}/${CITY}" > /mnt/target/etc/timezone
 rm -f /mnt/target/etc/localtime
 ln -sf /usr/share/zoneinfo/${REGION}/${CITY} /mnt/target/etc/localtime
 echo "Часовой пояс успешно установлен на ${REGION}/${CITY}! ✅"
+
+echo "---------------------------------------------"
+echo "Настройка русской локализации в системе..."
+# Прописываем локали для генерации
+echo "en_US.UTF-8 UTF-8" > /mnt/target/etc/locale.gen
+echo "ru_RU.UTF-8 UTF-8" >> /mnt/target/etc/locale.gen
+# Генерируем локали внутри чрута
+chroot /mnt/target locale-gen
+# Устанавливаем русский язык по умолчанию для всей системы
+echo 'LANG="ru_RU.UTF-8"' > /mnt/target/etc/env.d/02locale
+chroot /mnt/target env-update
+echo "Локализация настроена! ✅"
 
 echo "---------------------------------------------"
 echo "Выбор графического окружения:"
@@ -74,7 +100,8 @@ EOF
     chmod +x /mnt/target/etc/local.d/mirage-setup.start
 fi
 
-echo "Подготовка системного окружения и установка загрузчика GRUB..."
+echo "---------------------------------------------"
+echo "Подготовка системного окружения..."
 # Правильные бинды для chroot (жизненно важно для установки загрузчика)
 mount --types proc /proc /mnt/target/proc
 mount --rbind /sys /mnt/target/sys
@@ -84,9 +111,20 @@ mount --make-rslave /mnt/target/dev
 mount --bind /run /mnt/target/run
 mount --make-slave /mnt/target/run
 
+echo "Установка загрузчика GRUB..."
 chroot /mnt/target grub-install "$DISK_PATH"
 chroot /mnt/target grub-mkconfig -o /boot/grub/grub.cfg
 
+echo "---------------------------------------------"
+echo "Установка пароля для суперпользователя (root):"
+chroot /mnt/target passwd
+
+echo "---------------------------------------------"
+echo "Создание обычного пользователя 'mirage':"
+chroot /mnt/target useradd -m -G wheel,audio,video,usb -s /bin/bash mirage || true
+chroot /mnt/target passwd mirage
+
 echo "============================================="
 echo "   Установка Mirage OS успешно завершена! ✅   "
+echo "   Теперь можно ввести 'reboot' для запуска! "
 echo "============================================="
